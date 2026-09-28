@@ -1,16 +1,14 @@
 """
-LangChain Email Generation Module.
+LangChain Email Generation Module (OpenRouter Integration).
 
-Implements the modern LangChain composable architecture (LCEL):
-    Prompt Template -> ChatOpenAI -> Structured Output (Pydantic Validation)
+Implements the modern LangChain composable architecture (LCEL) routed through OpenRouter:
+    Prompt Template -> Chat Model (OpenRouter endpoint) -> Structured Output (Pydantic Validation)
 
-Historical Note for Learners:
-    In earlier versions of LangChain, workflows were constructed using `LLMChain`
-    with string-based output parsers (e.g., `PydanticOutputParser` or `OutputFixingParser`),
-    which prompted the model to format raw JSON and parsed it via regex or json.loads.
-    In modern LangChain, we compose pipelines using the pipe operator (`|`) and
-    leverage `.with_structured_output(PydanticModel)` which interfaces with the
-    underlying model's native tool-calling / JSON schema enforcement.
+Why OpenRouter?
+    OpenRouter provides an OpenAI-compatible API interface (base URL: https://openrouter.ai/api/v1)
+    that unlocks access to dozens of state-of-the-art models (OpenAI, Anthropic, Meta, etc.)
+    under a unified billing and endpoint structure, while preserving full compatibility
+    with LangChain's ChatOpenAI abstraction and structured output capabilities.
 """
 
 import os
@@ -24,7 +22,11 @@ from structured_output import EmailResponse
 # Load environment variables from .env if present
 load_dotenv()
 
-# System prompt giving explicit generation rules to the model
+# Centralized OpenRouter Configuration
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+DEFAULT_OPENROUTER_MODEL = "openai/gpt-4o-mini"
+
+# System prompt defining generation rules
 SYSTEM_INSTRUCTIONS = """You are an expert executive communications specialist and email copywriter.
 Your task is to write high-impact, professional emails tailored precisely to the user's intent, desired tone, and recipient context.
 
@@ -60,33 +62,46 @@ def create_email_chain(
     temperature: float = 0.7,
 ):
     """
-    Constructs the modern LangChain LCEL pipeline with structured output.
+    Constructs the modern LangChain LCEL pipeline with structured output via OpenRouter.
 
     Pipeline:
-        ChatPromptTemplate | ChatOpenAI.with_structured_output(EmailResponse)
+        ChatPromptTemplate | ChatOpenAI(OpenRouter endpoint).with_structured_output(EmailResponse)
 
     Args:
-        api_key: OpenAI API key (falls back to OPENAI_API_KEY environment variable).
-        model_name: OpenAI model identifier (default: gpt-4o-mini or OPENAI_MODEL env).
+        api_key: OpenRouter API key (defaults to OPENROUTER_API_KEY environment variable).
+        model_name: OpenRouter model identifier (defaults to OPENROUTER_MODEL or 'openai/gpt-4o-mini').
         temperature: Sampling temperature for generation creativity (0.0 to 1.0).
 
     Returns:
         A runnable LangChain LCEL chain that produces validated EmailResponse instances.
     """
-    resolved_api_key = api_key or os.getenv("OPENAI_API_KEY")
-    if not resolved_api_key:
+    resolved_api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+    if not resolved_api_key or not resolved_api_key.strip():
         raise ValueError(
-            "OpenAI API Key is missing. Please set OPENAI_API_KEY in your .env file "
+            "OpenRouter API Key is missing. Please set OPENROUTER_API_KEY in your .env file "
             "or enter it in the application sidebar."
         )
 
-    resolved_model = model_name or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    resolved_model = (
+        model_name
+        or os.getenv("OPENROUTER_MODEL")
+        or DEFAULT_OPENROUTER_MODEL
+    )
+    if not resolved_model or not resolved_model.strip():
+        raise ValueError(
+            "OpenRouter model identifier is missing. Please set OPENROUTER_MODEL or select a model."
+        )
 
-    # Initialize ChatOpenAI LLM
+    # Initialize ChatOpenAI configured with OpenRouter base URL and headers
     llm = ChatOpenAI(
-        model=resolved_model,
+        base_url=OPENROUTER_BASE_URL,
+        api_key=resolved_api_key.strip(),
+        model=resolved_model.strip(),
         temperature=temperature,
-        api_key=resolved_api_key,
+        default_headers={
+            "HTTP-Referer": "http://localhost:8501",
+            "X-Title": "Structured AI Email Generator",
+        },
     )
 
     # Bind the Pydantic schema for native structured output
@@ -106,14 +121,14 @@ def generate_email(
     temperature: float = 0.7,
 ) -> EmailResponse:
     """
-    High-level entry point to invoke the LangChain email generation workflow.
+    High-level entry point to invoke the OpenRouter-backed email generation workflow.
 
     Args:
         topic: Description of what the email is about.
         tone: The target tone for the email (e.g., Professional, Friendly, Urgent).
         recipient: Optional description of who the email is addressed to.
-        api_key: Optional OpenAI API key override.
-        model_name: Optional model override.
+        api_key: Optional OpenRouter API key override.
+        model_name: Optional OpenRouter model identifier override.
         temperature: Creativity parameter (default 0.7).
 
     Returns:

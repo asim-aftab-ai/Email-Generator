@@ -1,16 +1,24 @@
 """
-Test verification script for Structured AI Email Generator.
+Test verification script for Structured AI Email Generator (OpenRouter Integration).
+
 Tests:
 1. Pydantic model creation and validation rules.
 2. Boundary checks for formality_score (ge=1, le=10).
-3. LangChain prompt formatting and chain creation.
-4. Error handling for missing inputs.
+3. Non-empty string validators for all text fields.
+4. LangChain prompt formatting and variable composition.
+5. Error handling for missing OPENROUTER_API_KEY.
+6. OpenRouter pipeline construction with base_url and custom model.
 """
 
 import sys
 from pydantic import ValidationError
 from structured_output import EmailResponse
-from langchain_email import EMAIL_PROMPT, create_email_chain
+from langchain_email import (
+    EMAIL_PROMPT,
+    OPENROUTER_BASE_URL,
+    DEFAULT_OPENROUTER_MODEL,
+    create_email_chain,
+)
 
 
 def test_pydantic_valid():
@@ -89,30 +97,41 @@ def test_prompt_template_formatting():
     print("[PASS] test_prompt_template_formatting passed")
 
 
-def test_chain_creation_missing_api_key():
-    """Test chain creation fails cleanly without API key."""
+def test_chain_creation_missing_openrouter_key():
+    """Test chain creation fails cleanly without OPENROUTER_API_KEY."""
+    import os
+    original_key = os.environ.pop("OPENROUTER_API_KEY", None)
     try:
         create_email_chain(api_key=None)
-        print("[INFO] Chain created (OPENAI_API_KEY was found in environment)")
+        print("[FAIL] Expected ValueError for missing OpenRouter API key")
+        sys.exit(1)
     except ValueError as ve:
-        assert "OpenAI API Key is missing" in str(ve)
-        print("[PASS] test_chain_creation_missing_api_key correctly detected missing key")
+        assert "OpenRouter API Key is missing" in str(ve)
+        print("[PASS] test_chain_creation_missing_openrouter_key correctly detected missing key")
+    finally:
+        if original_key is not None:
+            os.environ["OPENROUTER_API_KEY"] = original_key
 
 
-def test_chain_creation_with_dummy_key():
-    """Test chain composition with key provided."""
-    chain = create_email_chain(api_key="sk-dummykeyforstructuraltest1234567890")
+def test_openrouter_chain_creation():
+    """Test chain composition with OpenRouter base_url and model."""
+    assert OPENROUTER_BASE_URL == "https://openrouter.ai/api/v1"
+    assert DEFAULT_OPENROUTER_MODEL == "openai/gpt-4o-mini"
+
+    chain = create_email_chain(
+        api_key="sk-or-v1-dummy-key-for-testing",
+        model_name="openai/gpt-4o-mini",
+    )
     assert chain is not None
-    print("[PASS] test_chain_creation_with_dummy_key successfully composed LCEL pipeline")
+    print("[PASS] test_openrouter_chain_creation successfully composed OpenRouter LCEL pipeline")
 
 
 if __name__ == "__main__":
-    print("Running Structured AI Email Generator test suite...")
+    print("Running Structured AI Email Generator (OpenRouter) test suite...")
     test_pydantic_valid()
     test_pydantic_invalid_formality_score()
     test_pydantic_empty_string_validation()
     test_prompt_template_formatting()
-    test_chain_creation_missing_api_key()
-    test_chain_creation_with_dummy_key()
+    test_chain_creation_missing_openrouter_key()
+    test_openrouter_chain_creation()
     print("\nAll unit and integration checks passed successfully!")
-

@@ -1,23 +1,23 @@
 """
-Streamlit Frontend for Structured AI Email Generator.
+Streamlit Frontend for Structured AI Email Generator (OpenRouter Integration).
 
 Entry point for the application. Collects user input, calls the LangChain
-generation workflow, and displays structured, validated email fields.
+generation workflow routed via OpenRouter, and displays structured, validated email fields.
 """
 
 import os
 import streamlit as st
 from dotenv import load_dotenv
 
-from langchain_email import generate_email
+from langchain_email import DEFAULT_OPENROUTER_MODEL, OPENROUTER_BASE_URL, generate_email
 from structured_output import EmailResponse
 
-# Load environment variables
+# Load environment variables from .env
 load_dotenv()
 
 # Page configuration
 st.set_page_config(
-    page_title="AI Email Generator — Structured Output",
+    page_title="AI Email Generator — OpenRouter & Structured Output",
     page_icon="✉️",
     layout="centered",
     initial_sidebar_state="expanded",
@@ -76,36 +76,63 @@ st.markdown(
 def render_sidebar() -> tuple[str, str, float]:
     """Renders the sidebar configuration and returns user settings."""
     with st.sidebar:
-        st.header("⚙️ Configuration")
+        st.header("⚙️ OpenRouter Config")
 
-        env_key = os.getenv("OPENAI_API_KEY", "")
+        env_key = os.getenv("OPENROUTER_API_KEY", "")
         has_env_key = bool(env_key)
 
         api_key_input = st.text_input(
-            "OpenAI API Key",
+            "OpenRouter API Key",
             value=env_key if has_env_key else "",
             type="password",
-            help="Your API key is used only for requests and never saved or logged.",
-            placeholder="sk-proj-...",
+            help="Your OpenRouter key (sk-or-v1-...). Handled securely in memory.",
+            placeholder="sk-or-v1-...",
         )
 
         if has_env_key and not api_key_input:
             api_key_input = env_key
 
         if api_key_input:
-            st.success("✓ API Key detected", icon="🔑")
+            st.success("✓ OpenRouter key configured", icon="🔑")
         else:
-            st.warning("⚠️ Please provide an OpenAI API Key.", icon="⚠️")
+            st.warning("⚠️ OpenRouter API Key required.", icon="⚠️")
+
+        st.caption(f"**Endpoint:** `{OPENROUTER_BASE_URL}`")
 
         st.divider()
 
-        st.subheader("Model Parameters")
-        model_name = st.selectbox(
-            "Model",
-            options=["gpt-4o-mini", "gpt-4o"],
-            index=0,
-            help="gpt-4o-mini is fast, cost-effective, and fully supports structured outputs.",
+        st.subheader("Model Selection")
+        env_model = os.getenv("OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL)
+
+        model_preset_options = [
+            "openai/gpt-4o-mini",
+            "openai/gpt-4o",
+            "anthropic/claude-3.5-haiku",
+            "meta-llama/llama-3.3-70b-instruct",
+            "Custom Model ID...",
+        ]
+
+        preset_index = 0
+        if env_model in model_preset_options:
+            preset_index = model_preset_options.index(env_model)
+        elif env_model != DEFAULT_OPENROUTER_MODEL:
+            preset_index = len(model_preset_options) - 1
+
+        selected_preset = st.selectbox(
+            "OpenRouter Model",
+            options=model_preset_options,
+            index=preset_index,
+            help="Select any model supported by OpenRouter with tool-calling/structured outputs.",
         )
+
+        if selected_preset == "Custom Model ID...":
+            model_name = st.text_input(
+                "Enter Model ID",
+                value=env_model if env_model not in model_preset_options else "",
+                placeholder="e.g., google/gemini-2.0-flash-001",
+            )
+        else:
+            model_name = selected_preset
 
         temperature = st.slider(
             "Creativity (Temperature)",
@@ -123,7 +150,7 @@ def render_sidebar() -> tuple[str, str, float]:
             **Pipeline Flow:**
             1. User Input Form
             2. `ChatPromptTemplate`
-            3. `ChatOpenAI`
+            3. `ChatOpenAI` (OpenRouter API)
             4. `with_structured_output`
             5. `Pydantic` Validation (`EmailResponse`)
             6. Structured UI Display
@@ -181,7 +208,7 @@ def main():
 
     st.markdown('<div class="main-header">Structured AI Email Generator</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="sub-header">Generate validated, structured executive emails using LangChain LCEL & Pydantic.</div>',
+        '<div class="sub-header">Generate validated, structured executive emails via OpenRouter & LangChain.</div>',
         unsafe_allow_html=True,
     )
 
@@ -225,18 +252,25 @@ def main():
             st.error("Please enter what the email is about before generating.", icon="⚠️")
             return
 
-        # 2. Validate API Key
+        # 2. Validate API Key & Model
         if not api_key or not api_key.strip():
             st.error(
-                "OpenAI API Key is missing! Please provide your key in the sidebar or in the `.env` file.",
+                "OpenRouter API Key is missing! Please provide your key in the sidebar or set `OPENROUTER_API_KEY` in `.env`.",
                 icon="🔑",
+            )
+            return
+
+        if not model_name or not model_name.strip():
+            st.error(
+                "OpenRouter model identifier is missing. Please select or enter a model ID.",
+                icon="⚠️",
             )
             return
 
         final_tone = custom_tone.strip() if selected_tone == "Custom..." and custom_tone else selected_tone
 
         # 3. Call LangChain Pipeline with graceful error handling
-        with st.spinner("Generating structured email via LangChain..."):
+        with st.spinner(f"Generating structured email via OpenRouter ({model_name})..."):
             try:
                 email_result: EmailResponse = generate_email(
                     topic=topic,
@@ -252,12 +286,14 @@ def main():
                 st.error(f"Validation Error: {str(ve)}", icon="❌")
             except Exception as e:
                 error_msg = str(e)
-                if "invalid_api_key" in error_msg.lower() or "authentication" in error_msg.lower():
-                    st.error("Authentication failed: Invalid OpenAI API Key. Please verify your credentials.", icon="🔑")
-                elif "rate_limit" in error_msg.lower():
-                    st.error("OpenAI Rate limit reached. Please wait a moment and try again.", icon="⏳")
+                if "401" in error_msg or "unauthorized" in error_msg.lower() or "authentication" in error_msg.lower():
+                    st.error("Authentication failed: Invalid OpenRouter API Key. Please verify your credentials at openrouter.ai/keys.", icon="🔑")
+                elif "402" in error_msg or "credits" in error_msg.lower():
+                    st.error("Insufficient credits: Your OpenRouter account balance is empty. Please top up at openrouter.ai/credits.", icon="💳")
+                elif "429" in error_msg or "rate_limit" in error_msg.lower():
+                    st.error("OpenRouter Rate limit reached. Please wait a moment and try again.", icon="⏳")
                 else:
-                    st.error(f"An unexpected error occurred: {error_msg}", icon="🚨")
+                    st.error(f"An unexpected error occurred during generation: {error_msg}", icon="🚨")
 
 
 if __name__ == "__main__":
