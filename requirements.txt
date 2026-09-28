@@ -1,0 +1,9 @@
+# Core
+python-dotenv>=1.0.1
+pydantic>=2.0.0
+
+# Optional / Common AI & Email Generation packages (uncomment as needed)
+# google-genai
+# openai
+# langchain
+# jinja2
